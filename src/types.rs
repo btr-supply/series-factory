@@ -84,11 +84,13 @@ pub struct Config {
     pub to: DateTime<Utc>,
     pub agg_mode: AggregationMode,
     pub agg_step: f64,
+    #[allow(dead_code)]
     pub agg_fields: Vec<String>,
     #[allow(dead_code)]
     pub weight_mode: WeightMode,
     #[allow(dead_code)]
     pub weights: Vec<f64>,
+    #[allow(dead_code)]
     pub tick_ttl: i64, // milliseconds
     pub tick_max_deviation: f64,
     #[allow(dead_code)]

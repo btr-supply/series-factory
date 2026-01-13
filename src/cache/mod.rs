@@ -6,6 +6,7 @@ use std::io::Read;
 
 /// Manages caching of raw downloaded data
 pub struct CacheManager {
+    #[allow(dead_code)]
     cache_dir: PathBuf,
 }
 
@@ -17,17 +18,20 @@ impl CacheManager {
     }
 
     /// Get the cache path for a given URL
+    #[allow(dead_code)]
     pub fn get_cache_path(&self, url: &str) -> PathBuf {
         let hash = Self::hash_url(url);
         self.cache_dir.join(hash)
     }
 
     /// Check if a cached file exists and is valid
+    #[allow(dead_code)]
     pub fn is_cached(&self, url: &str) -> bool {
         self.get_cache_path(url).exists()
     }
 
     /// Hash a URL to create a unique cache key
+    #[allow(dead_code)]
     fn hash_url(url: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(url.as_bytes());
@@ -35,6 +39,7 @@ impl CacheManager {
     }
 
     /// Read a cached file into memory
+    #[allow(dead_code)]
     pub fn read_cached(&self, url: &str) -> Result<Vec<u8>> {
         let path = self.get_cache_path(url);
         let mut file = fs::File::open(&path)?;
@@ -45,6 +50,7 @@ impl CacheManager {
     }
 
     /// Write data to cache
+    #[allow(dead_code)]
     pub fn write_cached(&self, url: &str, data: &[u8]) -> Result<()> {
         let path = self.get_cache_path(url);
         if let Some(parent) = path.parent() {
@@ -55,6 +61,7 @@ impl CacheManager {
     }
 
     /// Get the cache directory path
+    #[allow(dead_code)]
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
     }

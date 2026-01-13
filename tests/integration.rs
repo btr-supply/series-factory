@@ -1,11 +1,10 @@
-use series_factory::types::{Aggregate, AggregationMode, Config, DataSource, GenerativeModel};
+use series_factory::types::{AggregationMode, Config, DataSource, GenerativeModel};
 use series_factory::aggregation::Aggregator;
 use series_factory::sources::create_source;
 use chrono::{Duration, Utc};
 use futures::future::try_join_all;
 use tokio::sync::mpsc;
 
-const TEST_SYMBOL: &str = "BTCUSDT";
 const TEST_STEP_MS: i64 = 10_000; // 10 seconds
 
 /// Time aggregation test: consistent timestamp steps
@@ -15,8 +14,9 @@ async fn test_time_aggregation(config: Config) {
         .unwrap();
 
     let (tx, mut rx) = mpsc::channel(100);
+    let config_clone = config.clone();
     tokio::spawn(async move {
-        let _ = source.fetch_ticks(&config, tx).await;
+        let _ = source.fetch_ticks(&config_clone, tx).await;
     });
 
     let mut ticks = Vec::new();
@@ -50,8 +50,9 @@ async fn test_price_aggregation(config: Config, step_ratio: f64) {
     let model = GenerativeModel::GBM { mu: 0.0001, sigma: 0.001, base: 100.0 };
     let source = create_source(&DataSource::Synthetic(model)).await.unwrap();
 
+    let config_clone = config.clone();
     tokio::spawn(async move {
-        let _ = source.fetch_ticks(&config, tx).await;
+        let _ = source.fetch_ticks(&config_clone, tx).await;
     });
 
     let mut ticks = Vec::new();
@@ -123,8 +124,9 @@ async fn test_synthetic_models() {
             let source = create_source(&DataSource::Synthetic(model)).await.unwrap();
             let (tx, mut rx) = mpsc::channel(100);
 
+            let config_clone = config.clone();
             tokio::spawn(async move {
-                let _ = source.fetch_ticks(&config, tx).await;
+                let _ = source.fetch_ticks(&config_clone, tx).await;
             });
 
             let mut ticks = Vec::new();
@@ -226,8 +228,9 @@ async fn test_aggregate_fields() {
     };
 
     let (tx, mut rx) = mpsc::channel(100);
+    let config_clone = config.clone();
     tokio::spawn(async move {
-        let _ = source.fetch_ticks(&config, tx).await;
+        let _ = source.fetch_ticks(&config_clone, tx).await;
     });
 
     let mut ticks = Vec::new();

@@ -6,7 +6,6 @@ use parquet::arrow::ArrowWriter;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs;
 
 /// Writes aggregated time series data to Parquet format
 pub struct OutputWriter {
@@ -26,7 +25,7 @@ impl OutputWriter {
         }
 
         // Create output directory
-        fs2::create_dir_all(&config.output_dir)?;
+        std::fs::create_dir_all(&config.output_dir)?;
 
         // Generate filename
         let filename = self.generate_filename(config);
