@@ -1,5 +1,8 @@
 pub mod binance;
-pub mod mexc;
+pub mod bybit;
+pub mod bitget;
+pub mod kucoin;
+pub mod okx;
 pub mod synthetic;
 
 use crate::types::{Config, DataSource, Tick};
@@ -20,7 +23,10 @@ pub async fn create_source(source: &DataSource) -> Result<Box<dyn TickSource>> {
     match source {
         DataSource::Exchange(name) => match name.as_str() {
             "binance" => Ok(Box::new(binance::BinanceSource::new())),
-            "mexc" => Ok(Box::new(mexc::MexcSource::new())),
+            "bybit" => Ok(Box::new(bybit::BybitSource::new())),
+            "bitget" => Ok(Box::new(bitget::BitgetSource::new())),
+            "kucoin" => Ok(Box::new(kucoin::KuCoinSource::new())),
+            "okx" => Ok(Box::new(okx::OKXSource::new())),
             _ => anyhow::bail!("Unsupported exchange: {}", name),
         },
         DataSource::Synthetic(model) => Ok(Box::new(synthetic::SyntheticSource::new(model.clone()))),
