@@ -233,6 +233,8 @@ async fn test_aggregate_fields() {
         assert!(agg.open > 0.0);
         assert!(agg.high >= agg.low);
         assert!(agg.close > 0.0);
+        assert!(agg.mid > 0.0);
+        assert_eq!(agg.mid, agg.close, "mid should equal close");
         assert!(agg.spread >= 0.0);
         assert!(agg.velocity >= 0.0);
         assert!(agg.high >= agg.open && agg.high >= agg.close);
