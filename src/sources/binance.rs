@@ -201,8 +201,8 @@ impl BinanceSource {
         let ask_array = Float64Array::from(asks);
         let vbid_array = UInt32Array::from(vbids);
         let vask_array = UInt32Array::from(vasks);
-        
-        // Create schema
+
+        // Create schema (no source_id stored - it's applied when reading)
         let schema = arrow::datatypes::Schema::new(vec![
             arrow::datatypes::Field::new("timestamp", arrow::datatypes::DataType::Int64, false),
             arrow::datatypes::Field::new("bid", arrow::datatypes::DataType::Float64, false),
@@ -210,7 +210,7 @@ impl BinanceSource {
             arrow::datatypes::Field::new("vbid", arrow::datatypes::DataType::UInt32, false),
             arrow::datatypes::Field::new("vask", arrow::datatypes::DataType::UInt32, false),
         ]);
-        
+
         // Create record batch
         let batch = RecordBatch::try_new(
             StdArc::new(schema.clone()),
@@ -242,18 +242,18 @@ impl BinanceSource {
     fn read_parquet_file(file_path: &Path) -> Result<Vec<Tick>> {
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use arrow::array::{Int64Array, Float64Array, UInt32Array};
-        
+
         // Open parquet file
         let file = fs::File::open(file_path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         let reader = builder.build()?;
-        
+
         let mut ticks = Vec::new();
-        
+
         // Read all batches
         for batch_result in reader {
             let batch = batch_result?;
-            
+
             // Extract columns
             let timestamps = batch.column(0).as_any().downcast_ref::<Int64Array>()
                 .ok_or_else(|| anyhow::anyhow!("Failed to cast timestamp column"))?;
@@ -265,7 +265,7 @@ impl BinanceSource {
                 .ok_or_else(|| anyhow::anyhow!("Failed to cast vbid column"))?;
             let vasks = batch.column(4).as_any().downcast_ref::<UInt32Array>()
                 .ok_or_else(|| anyhow::anyhow!("Failed to cast vask column"))?;
-            
+
             // Convert to ticks
             for i in 0..batch.num_rows() {
                 // Normalize timestamp units to milliseconds if needed
@@ -282,7 +282,7 @@ impl BinanceSource {
                 });
             }
         }
-        
+
         Ok(ticks)
     }
 
@@ -341,7 +341,7 @@ impl BinanceSource {
     fn process_zip_data_parallel(file_data: &Vec<u8>) -> Result<Vec<Tick>> {
         let cursor = Cursor::new(file_data);
         let mut archive = ZipArchive::new(cursor)?;
-        
+
         // Extract all CSV files from the ZIP sequentially (ZIP access isn't thread-safe)
         let mut csv_files = Vec::new();
         for i in 0..archive.len() {
@@ -350,7 +350,7 @@ impl BinanceSource {
                     if !file.name().ends_with(".csv") {
                         continue;
                     }
-                    
+
                     let mut csv_data = Vec::new();
                     if std::io::Read::read_to_end(&mut file, &mut csv_data).is_ok() {
                         csv_files.push(csv_data);
@@ -373,10 +373,10 @@ impl BinanceSource {
             .into_iter()
             .flatten()
             .collect();
-            
+
         // Sort ticks by timestamp using Rayon
         all_ticks.par_sort_unstable_by_key(|t| t.timestamp);
-        
+
         Ok(all_ticks)
     }
 
@@ -459,13 +459,13 @@ impl TickSource for BinanceSource {
         tx: mpsc::Sender<Vec<Tick>>,
     ) -> Result<()> {
         info!("Fetching Binance data for {}{}", config.base, config.quote);
-        
+
         let files = self.get_data_files(config).await?;
         info!("Processing {} data files", files.len());
-        
+
         // Process parquet files in parallel using Rayon
         info!("Reading {} parquet files in parallel using Rayon thread pool", files.len());
-        
+
         let all_ticks_results: Vec<Result<Vec<Tick>>> = files
             .par_iter()
             .map(|file_path| {
@@ -495,7 +495,7 @@ impl TickSource for BinanceSource {
                 }
             }
         }
-        
+
         Ok(())
     }
 }

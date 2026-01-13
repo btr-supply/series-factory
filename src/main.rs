@@ -15,7 +15,6 @@ use types::{Aggregate, Config, DataSource, Tick};
 
 use anyhow::Result;
 use clap::Parser;
-use futures::future::try_join_all;
 use rayon::prelude::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -31,7 +30,10 @@ async fn main() -> Result<()> {
         .init();
 
     // Initialize Rayon thread pool
-    let num_threads = std::cmp::max(num_cpus::get(), 4);
+    let num_threads = std::thread::available_parallelism()
+        .map(|x| x.get())
+        .unwrap_or(4)
+        .max(4);
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .thread_name(|i| format!("rayon-worker-{}", i))
@@ -59,7 +61,7 @@ async fn main() -> Result<()> {
 
     // Create tick sources
     let mut tick_sources = Vec::new();
-    for data_source in &data_sources {
+    for data_source in data_sources.iter() {
         tick_sources.push(create_source(data_source).await?);
     }
 
@@ -125,7 +127,9 @@ async fn main() -> Result<()> {
     }
 
     // Wait for all tasks to complete
-    try_join_all(fetch_tasks).await?;
+    for task in fetch_tasks {
+        task.await?;
+    }
     aggregation_task.await?;
     
     // Sort by timestamp and deduplicate

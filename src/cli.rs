@@ -1,4 +1,4 @@
-use crate::types::{AggregationMode, Config, DataSource, GenerativeModel, WeightMode};
+use crate::types::{AggregationMode, Config, DataSource, GenerativeModel, WeightMode, normalize_weights};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use clap::Parser;
@@ -75,8 +75,11 @@ impl Args {
         let weights = if let Some(w) = self.weights {
             w
         } else {
-            vec![1.0 / self.sources.len() as f64; self.sources.len()]
+            vec![]  // Empty means equal weights
         };
+
+        // Normalize weights to sum to 1.0
+        let source_weights = normalize_weights(&weights, self.sources.len());
 
         // Handle "all" fields
         let agg_fields = if self.agg_fields.len() == 1 && self.agg_fields[0] == "all" {
@@ -98,6 +101,7 @@ impl Args {
             agg_fields,
             weight_mode,
             weights,
+            source_weights,
             tick_ttl: self.tick_ttl,
             tick_max_deviation: self.tick_max_deviation,
             out_format: self.out_format,

@@ -23,8 +23,9 @@ async fn main() -> anyhow::Result<()> {
     for (name, model) in models {
         println!("\n=== Testing {} ===", name);
 
-        let source = create_source(&DataSource::Synthetic(model)).await?;
+        let source = create_source(&DataSource::Synthetic(model.clone())).await?;
         let config = Config {
+            source_weights: vec![],
             base: "TEST".to_string(),
             quote: "USD".to_string(),
             sources: vec![name.to_string()],

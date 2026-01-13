@@ -249,17 +249,17 @@ impl TickSource for SyntheticSource {
         tx: mpsc::Sender<Vec<Tick>>,
     ) -> Result<()> {
         info!("Generating synthetic data using {:?}", self.model);
-        
+
         let ticks = self.generate_ticks(config);
         let total_ticks = ticks.len();
-        
+
         // Send in batches
         for chunk in ticks.chunks(10000) {
             tx.send(chunk.to_vec()).await?;
         }
-        
+
         info!("Generated {} synthetic ticks", total_ticks);
         Ok(())
     }
-    
+
 }

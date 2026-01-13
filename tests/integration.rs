@@ -2,7 +2,6 @@ use series_factory::types::{AggregationMode, Config, DataSource, GenerativeModel
 use series_factory::aggregation::Aggregator;
 use series_factory::sources::create_source;
 use chrono::{Duration, Utc};
-use futures::future::try_join_all;
 use tokio::sync::mpsc;
 
 const TEST_STEP_MS: i64 = 10_000;
@@ -20,6 +19,7 @@ fn test_config() -> Config {
         agg_fields: vec!["all".to_string()],
         weight_mode: series_factory::types::WeightMode::Static,
         weights: vec![1.0],
+        source_weights: vec![],
         tick_ttl: 5000,
         tick_max_deviation: 0.05,
         out_format: "parquet".to_string(),
@@ -40,8 +40,9 @@ async fn test_exchange_time_aggregation(exchange: &str, days_back: i64) {
         .unwrap();
 
     let (tx, mut rx) = mpsc::channel(100);
+    let config_for_spawn = config.clone();
     tokio::spawn(async move {
-        let _ = source.fetch_ticks(&config, tx).await;
+        let _ = source.fetch_ticks(&config_for_spawn, tx).await;
     });
 
     let mut ticks = Vec::new();
@@ -68,9 +69,7 @@ async fn test_exchange_time_aggregation(exchange: &str, days_back: i64) {
 }
 
 /// Fetch ticks from a source
-async fn fetch_ticks(source: DataSource, from: chrono::DateTime<Utc>, to: chrono::DateTime<Utc>) -> Vec<crate::types::Tick> {
-    use series_factory::types::Tick;
-
+async fn fetch_ticks(source: DataSource, from: chrono::DateTime<Utc>, to: chrono::DateTime<Utc>) -> Vec<series_factory::types::Tick> {
     let src = create_source(&source).await.unwrap();
 
     let (tx, mut rx) = mpsc::channel(100);
@@ -96,8 +95,23 @@ async fn test_binance_time_aggregation() {
 }
 
 #[tokio::test]
-async fn test_mexc_time_aggregation() {
-    test_exchange_time_aggregation("mexc", 7).await;
+async fn test_bybit_time_aggregation() {
+    test_exchange_time_aggregation("bybit", 30).await;
+}
+
+#[tokio::test]
+async fn test_okx_time_aggregation() {
+    test_exchange_time_aggregation("okx", 30).await;
+}
+
+#[tokio::test]
+async fn test_kucoin_time_aggregation() {
+    test_exchange_time_aggregation("kucoin", 30).await;
+}
+
+#[tokio::test]
+async fn test_bitget_time_aggregation() {
+    test_exchange_time_aggregation("bitget", 30).await;
 }
 
 #[tokio::test]
@@ -113,8 +127,9 @@ async fn test_gbm_price_aggregation() {
     let source = create_source(&DataSource::Synthetic(model)).await.unwrap();
 
     let (tx, mut rx) = mpsc::channel(100);
+    let config_for_spawn = config.clone();
     tokio::spawn(async move {
-        let _ = source.fetch_ticks(&config, tx).await;
+        let _ = source.fetch_ticks(&config_for_spawn, tx).await;
     });
 
     let mut ticks = Vec::new();
@@ -169,8 +184,9 @@ async fn test_all_synthetic_models() {
             let source = create_source(&DataSource::Synthetic(model)).await.unwrap();
             let (tx, mut rx) = mpsc::channel(100);
 
+            let config_for_spawn = config.clone();
             tokio::spawn(async move {
-                let _ = source.fetch_ticks(&config, tx).await;
+                let _ = source.fetch_ticks(&config_for_spawn, tx).await;
             });
 
             let mut ticks = Vec::new();
@@ -193,7 +209,9 @@ async fn test_all_synthetic_models() {
         })
     }).collect();
 
-    try_join_all(tasks).await.unwrap();
+    for task in tasks {
+        task.await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -206,8 +224,9 @@ async fn test_aggregate_fields() {
     let source = create_source(&DataSource::Synthetic(model)).await.unwrap();
 
     let (tx, mut rx) = mpsc::channel(100);
+    let config_for_spawn = config.clone();
     tokio::spawn(async move {
-        let _ = source.fetch_ticks(&config, tx).await;
+        let _ = source.fetch_ticks(&config_for_spawn, tx).await;
     });
 
     let mut ticks = Vec::new();

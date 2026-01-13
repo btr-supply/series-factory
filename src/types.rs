@@ -15,11 +15,11 @@ pub fn round_to_6_sig_digits(value: f64) -> f64 {
 /// A single market tick with bid/ask prices and volumes
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tick {
-    pub timestamp: i64, // milliseconds since epoch
+    pub timestamp: i64,   // milliseconds since epoch
     pub bid: f64,
     pub ask: f64,
-    pub vbid: u32, // volume at bid in USD*
-    pub vask: u32, // volume at ask in USD*
+    pub vbid: u32,        // volume at bid in USD*
+    pub vask: u32,        // volume at ask in USD*
 }
 
 impl PartialOrd for Tick {
@@ -86,10 +86,10 @@ pub struct Config {
     pub agg_step: f64,
     #[allow(dead_code)]
     pub agg_fields: Vec<String>,
-    #[allow(dead_code)]
     pub weight_mode: WeightMode,
-    #[allow(dead_code)]
     pub weights: Vec<f64>,
+    /// Normalized weights for each source (sums to 1.0)
+    pub source_weights: Vec<f64>,
     #[allow(dead_code)]
     pub tick_ttl: i64, // milliseconds
     pub tick_max_deviation: f64,
@@ -97,6 +97,34 @@ pub struct Config {
     pub out_format: String,
     pub cache_dir: PathBuf,
     pub output_dir: PathBuf,
+}
+
+/// Normalize weights so they sum to 1.0. If empty, returns equal weights for n sources.
+pub fn normalize_weights(weights: &[f64], n_sources: usize) -> Vec<f64> {
+    if weights.is_empty() {
+        // Equal weights
+        vec![1.0 / n_sources as f64; n_sources]
+    } else if weights.len() != n_sources {
+        // Mismatch: pad or truncate to match n_sources
+        let mut result = weights.to_vec();
+        while result.len() < n_sources {
+            result.push(1.0);
+        }
+        result.truncate(n_sources);
+        let sum: f64 = result.iter().sum();
+        if sum > 0.0 {
+            result.iter().map(|w| w / sum).collect()
+        } else {
+            vec![1.0 / n_sources as f64; n_sources]
+        }
+    } else {
+        let sum: f64 = weights.iter().sum();
+        if sum > 0.0 {
+            weights.iter().map(|w| w / sum).collect()
+        } else {
+            vec![1.0 / n_sources as f64; n_sources]
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -232,9 +232,15 @@ impl Aggregator {
                 .sum::<f64>() / valid_ticks.len() as f64
         };
         
-        // Sum volumes from valid ticks only (both sides accumulate within the bucket)
-        let vbid: u32 = valid_ticks.iter().map(|t| t.vbid as u64).sum::<u64>().min(u32::MAX as u64) as u32;
-        let vask: u32 = valid_ticks.iter().map(|t| t.vask as u64).sum::<u64>().min(u32::MAX as u64) as u32;
+        // Sum volumes from valid ticks only
+        let vbid: u32 = valid_ticks.iter()
+            .map(|t| t.vbid as u64)
+            .sum::<u64>()
+            .min(u32::MAX as u64) as u32;
+        let vask: u32 = valid_ticks.iter()
+            .map(|t| t.vask as u64)
+            .sum::<u64>()
+            .min(u32::MAX as u64) as u32;
         
         // Calculate velocity: sqrt of number of underlying ticks in bucket
         let velocity = (valid_ticks.len() as f32).sqrt();

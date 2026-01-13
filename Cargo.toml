@@ -20,10 +20,8 @@ rayon = "1.10"
 clap = { version = "4.5", features = ["derive"] }
 # Date/time handling
 chrono = { version = "0.4", features = ["serde"] }
-# HTTP client - synchronous, simple
+# HTTP client - synchronous
 ureq = "2.10"
-# HTTP client - async for MEXC
-reqwest = { version = "0.12", features = ["json"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 # CSV parsing
@@ -45,18 +43,12 @@ rand = "0.8"
 rand_distr = "0.4"
 # Regex for parsing generative parameters
 regex = "1.11"
-# LRU cache
-lru = "0.12"
-# CPU core detection
-num_cpus = "1.16"
 # Async traits (needed for dyn compatibility)
 async-trait = "0.1"
 # Error handling (simplified usage)
 anyhow = "1.0"
 # Hash for cache keys
 sha2 = "0.10"
-# Futures for async operations
-futures = "0.3"
 
 [profile.dev]
 opt-level = 0

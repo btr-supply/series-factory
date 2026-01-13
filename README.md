@@ -1,18 +1,26 @@
 <div align="center">
-  <img src="banner.png" alt="Series Factory Banner" width="100%">
+  <img border-radius="25px" max-height="250px" src="./banner.png" />
+  <h1>Series Factory</h1>
+  <p>
+    <strong>Historical & synthetic time series aggregator</strong>
+  </p>
+  <p>
+    <!-- <a href="https://btr.supply/docs"><img alt="Docs" src="https://img.shields.io/badge/Docs-212121?style=flat-square&logo=readthedocs&logoColor=white" width="auto"/></a> -->
+    <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-000000?style=flat-square&logo=open-source-initiative&logoColor=white&labelColor=4c9c3d" width="auto"/></a>
+    <a href="https://t.me/BTRSupply"><img alt="Telegram" src="https://img.shields.io/badge/Telegram-24b3e3?style=flat-square&logo=telegram&logoColor=white" width="auto"/></a>
+    <a href="https://twitter.com/BTRSupply"><img alt="X (Twitter)" src="https://img.shields.io/badge/@BTRSupply-000000?style=flat-square&logo=x&logoColor=white" width="auto"/></a>
+    </p>
 </div>
 
-# Series Factory
-
-High-performance data pipeline for historical and synthetic time series data.
-Aggregate sources or generate fresh data using stochastic models.
+Fetch data from high quality data sources or generate fresh test data using stochastic models, cleanse and aggregate at speed.
 
 ## Table of Contents
 - [Features](#features)
 - [Installation](#installation)
+- [Data Sources](#data-sources)
+- [Generative Models](#generative-models)
 - [Usage](#usage)
 - [Series Aggregation Methodology](#series-aggregation-methodology)
-- [Generative Models](#generative-models)
 - [Performance](#performance)
 - [Output Format](#output-format)
 - [Caching Strategy](#caching-strategy)
@@ -21,7 +29,7 @@ Aggregate sources or generate fresh data using stochastic models.
 
 ## Features
 
-- **Multiple Data Sources**: Support for exchange data (Binance, MEXC, Bybit, Coinbase, etc.) and synthetic generators.
+- **Multiple Data Sources**: Support for 5+ CEX exchanges and synthetic generators.
 - **Aggregation Methods**: Time-based and tick-based aggregation with customizable parameters.
 - **Advanced Analytics**: Velocity, dispersion, and drift calculations per aggregate.
 - **Generative Models**: GBM, FBM, Heston, NJDM, and DEJDM for synthetic data generation.
@@ -29,7 +37,26 @@ Aggregate sources or generate fresh data using stochastic models.
 - **Intelligent Caching**: Three-tier caching system for optimal performance.
 - **Data Quality**: Automatic filtering of stale and deviated ticks.
 - **Parquet Output**: Compressed columnar format optimized for time-series queries.
-- **Triangular Re-basing**: Construct synthetic pairs (e.g., BTC-ETH) from liquid USD*-denominated pairs.
+
+## Data Sources
+
+### Supported Exchanges
+
+| Exchange | ID | Data Format | History From | Notes |
+|----------|----|-------------|--------------|-------|
+| Binance | `binance` | ZIP/CSV | 2017 (monthly), 2021 (daily) | Monthly files for completed months, daily for current month |
+| Bybit | `bybit` | GZIP/CSV | 2019 | Monthly files for completed months, daily for current month |
+| Bitget | `bitget` | ZIP/CSV | 2021 | Daily files, sequential chunks (001-N) |
+| OKX | `okx` | ZIP/CSV | 2021 | Daily files, dash-separated symbols (BTC-USDT) |
+| KuCoin | `kucoin` | ZIP/CSV | 2020 | Daily files |
+
+### Exchange Comparison
+
+<div align="center">
+  <img src="assets/exchange_spreads_comparison.png" alt="Exchange Spread Comparison" width="100%">
+</div>
+
+The chart above shows price spread, dispersion spread, and drift spread across 5 major CEX exchanges for BTC-USDT with 10-second aggregation.
 
 ## Installation
 
@@ -51,15 +78,15 @@ cargo build --release
 |-----------|-------------|---------|
 | `--base` | Base asset (e.g., "BTC") | "BTC" |
 | `--quote` | Quote asset (e.g., "USDT") | "USDT" |
-| `--sources` | Data sources (e.g., "binance") or generative models (pipe-separated) | "binance" |
+| `--sources` | Pipe-separated data sources (e.g., "binance\|bybit") or generative model | "binance" |
 | `--from` | Start date (YYYY-MM-DD) | Required |
 | `--to` | End date (YYYY-MM-DD or "now") | Required |
 | `--agg-mode` | Aggregation method ("time" or "tick") | "time" |
 | `--agg-step` | Aggregation step (ms for time, ratio for tick) | Required |
-| `--agg-fields` | Pipe-separated fields to include in output (e.g., "open\|high\|low\|close\|mid\|spread") | All fields |
-| `--weight-mode` | Series weighting method ("static", "volume", or "mixed") | "static" |
-| `--weights` | Pipe-separated list of static weights (e.g., "0.6\|0.4") | Equal weights |
-| `--tick-ttl` | Tick time-to-live in milliseconds for staleness check. | 100 |
+| `--agg-fields` | Pipe-separated fields to include in output | All fields |
+| `--weight-mode` | Weighting mode ("static", "volume", or "mixed") | "static" |
+| `--weights` | Pipe-separated static weights (auto-normalized) | Equal weights |
+| `--tick-ttl` | Tick time-to-live in milliseconds for staleness check | 100 |
 | `--tick-max-deviation` | Maximum tick deviation ratio for outlier filtering. | 0.001 (0.1%) |
 | `--out-format` | Output file format. | "parquet" |
 | `--cache-dir` | Cache directory. | "./cache" |
@@ -96,29 +123,24 @@ Tick {
 }
 ```
 
+**Note**: When using multiple data sources (e.g., `--sources="binance|bybit"`), each source's ticks are aggregated separately and then merged at the aggregate level. Source identity is tracked implicitly through separate aggregation pipelines, not stored on individual ticks.
+
 ### Step 2: Optional Triangular Re-basing
 
-For synthetic pairs (e.g., BTC-ETH), the system uses the most liquid USD* denominated pairs to construct the series. This reduces the number of series to download and cache.
-
-- **USDT denominated**: Binance, MEXC, Bybit, Gate, Bitget, OKX, HTX, KuCoin, BingX
-- **USD denominated**: Coinbase, Crypto.com, Kraken, Bitfinex, Bitstamp, HyperLiquid
+For synthetic pairs (e.g., BTC-ETH), the system uses the most liquid USDT denominated pairs to construct the series.
 
 #### 2.1 Data Source Characteristics
 
-**Binance** (`binance`):
-- Provides downloadable ZIP files with historical aggregated trade data
-- Data available from 2017 onwards
-- Monthly and daily files for efficient bulk downloads
-- Best for: Large historical data requests, backtesting
+All supported exchanges provide downloadable historical trade data via public data lakes:
 
-**MEXC** (`mexc`):
-- API-based historical data fetching via `/api/v3/aggTrades` endpoint
-- Data available from 2023 onwards (01-01-2023)
-- Rate-limited (120 requests/minute), uses pagination
-- Best for: Recent data, real-time integration, smaller date ranges
+- **Binance**: Monthly ZIP files from 2017, daily files from 2021. Automatically uses daily data for the current/ongoing month since monthly files are not yet available.
+- **Bybit**: Monthly GZIP files from 2019, with daily files for the current month
+- **OKX**: Daily ZIP files from 2021, dash-separated symbols (BTC-USDT)
+- **KuCoin**: Daily ZIP files from 2020
+- **Bitget**: Daily ZIP files from 2021, sequential chunks (001-N)
 
 #### 2.2 Triangulation
-Time-based forward filling is used to merge the USD* pairs into a single intermediate synthetic series.
+Time-based forward filling is used to merge the USDT pairs into a single intermediate synthetic series.
 
 #### 2.3 Volume Re-basing
 To make volumes comparable, they are denominated in USD*. For synthetic pairs, the volume is estimated using the arithmetic mean of the constituent pair volumes to avoid overstating liquidity.
@@ -196,11 +218,27 @@ The factory can generate synthetic series using several stochastic process model
 
 **IMPORTANT**: All synthetic data uses a fixed 500ms epoch (one tick every 500 milliseconds). All time-related parameters are specified on a **yearly basis** and automatically converted to per-epoch values by the system.
 
+### Available Models
+
+| Model | ID | Parameters | Description |
+|-------|----|------------|-------------|
+| Geometric Brownian Motion | `gbm(...)` | `mu, sigma, base` | Continuous stochastic process with drift |
+| Fractional Brownian Motion | `fbm(...)` | `mu, sigma, hurst, base` | BM with long-range dependence (Hurst parameter) |
+| Heston Stochastic Volatility | `hm(...)` | `mu, sigma, kappa, theta, xi, rho, base` | Volatility follows mean-reverting process |
+| Normal Jump-Diffusion | `njdm(...)` | `mu, sigma, lambda, mu_jump, sigma_jump, base` | GBM + normally distributed jumps |
+| Double Exp. Jump-Diffusion | `dejdm(...)` | `mu, sigma, lambda, mu_pos, mu_neg, p_neg, base` | GBM + asymmetric exponential jumps |
+
+### Model Comparison
+
+<div align="center">
+  <img src="assets/synthetic_models_comparison.png" alt="Synthetic Models Comparison" width="100%">
+</div>
+
 ### Time Parameters Conversion
 - **Epochs per year**: ~63,115,200 (calculated as 365.25 × 24 × 60 × 60 × 1000 ÷ 500)
-- **Parameter conversion**: 
+- **Parameter conversion**:
   - Drift rates: `yearly_mu / epochs_per_year`
-  - Volatilities: `yearly_sigma / sqrt(epochs_per_year)` 
+  - Volatilities: `yearly_sigma / sqrt(epochs_per_year)`
   - Frequencies: `yearly_lambda / epochs_per_year`
 
 ### Geometric Brownian Motion (GBM)
@@ -208,72 +246,70 @@ A continuous-time stochastic process where the logarithm of the randomly varying
 ```
 gbm(mu, sigma, base)
 ```
-- `mu`: **Yearly** drift rate (expected annual return, e.g., 0.0001 for 0.01% annual drift).
-- `sigma`: **Yearly** volatility (annual standard deviation, e.g., 0.001 for 0.1% annual volatility).
-- `base`: Starting price.
+- `mu`: **Yearly** drift rate (e.g., 0.05 for 5% annual drift)
+- `sigma`: **Yearly** volatility (e.g., 0.2 for 20% annual volatility)
+- `base`: Starting price
 
-Example: `gbm(0.0001,0.001,100.0)` (0.01% annual drift, 0.1% annual volatility, starting at 100)
+Example: `gbm(0.05,0.2,100.0)`
 
 ### Fractional Brownian Motion (FBM)
 An extension of Brownian motion with a Hurst parameter `h` that models long-range dependence.
 ```
 fbm(mu, sigma, hurst, base)
 ```
-- `mu`: **Yearly** drift rate.
-- `sigma`: **Yearly** volatility magnitude.
-- `hurst`: Hurst parameter (0-1), determining the process characteristics:
-  - `h = 0.5`: Standard Brownian motion (no correlation).
-  - `h > 0.5`: Persistent behavior (positively correlated increments).
-  - `h < 0.5`: Anti-persistent behavior (negatively correlated increments).
-- `base`: Starting price.
+- `mu`: **Yearly** drift rate
+- `sigma`: **Yearly** volatility magnitude
+- `hurst`: Hurst parameter (0-1)
+  - `h = 0.5`: Standard Brownian motion
+  - `h > 0.5`: Persistent behavior (trends)
+  - `h < 0.5`: Anti-persistent behavior (mean-reverting)
+- `base`: Starting price
 
-Example: `fbm(0.0001,0.001,0.75,100.0)`
+Example: `fbm(0.05,0.2,0.75,100.0)`
 
-### Heston Model
-A stochastic volatility model where volatility itself follows a random process, mean-reverting to a long-term average.
+### Heston Stochastic Volatility Model
+Volatility itself follows a random process, mean-reverting to a long-term average.
 ```
 hm(mu, sigma, kappa, theta, xi, rho, base)
 ```
-- `mu`: **Yearly** drift rate.
-- `sigma`: **Yearly** initial volatility.
-- `kappa`: **Yearly** mean reversion rate for volatility (speed of reversion to `theta`).
-- `theta`: Long-term average volatility (unitless).
-- `xi`: **Yearly** volatility of volatility.
-- `rho`: Correlation between asset price and its volatility process (-1 to 1).
-- `base`: Starting price.
+- `mu`: **Yearly** drift rate
+- `sigma`: **Yearly** initial volatility
+- `kappa`: Mean reversion speed for volatility
+- `theta`: Long-term average volatility
+- `xi`: Volatility of volatility
+- `rho`: Price-vol correlation (-1 to 1)
+- `base`: Starting price
 
-Example: `hm(0.0001,0.001,1000,0.001,0.001,-0.75,100.0)`
+Example: `hm(0.05,0.2,1000,0.04,0.3,-0.75,100.0)`
 
 ### Normal Jump-Diffusion Model (NJDM)
-Combines a continuous GBM process with discrete jumps at random intervals, where jump sizes are normally distributed.
+Combines GBM with discrete jumps at random intervals (normally distributed jump sizes).
 ```
 njdm(mu, sigma, lambda, mu_jump, sigma_jump, base)
 ```
-- `mu`: **Yearly** drift rate.
-- `sigma`: **Yearly** diffusion volatility (volatility of the continuous part).
-- `lambda`: **Yearly** jump frequency (expected number of jumps per year).
-- `mu_jump`: Mean jump size (as fraction, e.g., 0.1 for 10% jump).
-- `sigma_jump`: Standard deviation of jump size (as fraction).
-- `base`: Starting price.
+- `mu`: **Yearly** drift rate
+- `sigma`: **Yearly** diffusion volatility
+- `lambda`: **Yearly** jump frequency (jumps per year)
+- `mu_jump`: Mean jump size (as fraction)
+- `sigma_jump`: Jump size standard deviation
+- `base`: Starting price
 
-Example: `njdm(0.0001,0.001,10,0,0.1,100.0)` (10 jumps per year on average)
+Example: `njdm(0.05,0.2,10,0.01,0.05,100.0)`
 
 ### Double Exponential Jump-Diffusion Model (DEJDM)
-Similar to NJDM, but models positive and negative jumps separately using exponential distributions, allowing for asymmetric jump behavior.
+GBM with asymmetric positive/negative jumps (exponentially distributed).
 ```
 dejdm(mu, sigma, lambda, mu_pos_jump, mu_neg_jump, p_neg_jump, base)
 ```
-- `mu`: **Yearly** drift rate.
-- `sigma`: **Yearly** diffusion volatility.
-- `lambda`: **Yearly** jump frequency.
-- `mu_pos_jump`: Mean positive jump size (as fraction).
-- `mu_neg_jump`: Mean negative jump size (as fraction, negative value).
-- `p_neg_jump`: Probability of a negative jump (0-1).
-- `base`: Starting price.
+- `mu`: **Yearly** drift rate
+- `sigma`: **Yearly** diffusion volatility
+- `lambda`: **Yearly** jump frequency
+- `mu_pos_jump`: Mean positive jump size
+- `mu_neg_jump`: Mean negative jump size (negative value)
+- `p_neg_jump`: Probability of negative jump (0-1)
+- `base`: Starting price
 
-*Note: Jump sizes are exponentially distributed, not normally distributed.*
-
-Example: `dejdm(0.0001,0.001,10,0.01,-0.02,0.6,100.0)`
+Example: `dejdm(0.05,0.2,10,0.02,-0.03,0.4,100.0)`
 
 ## Performance
 
@@ -403,30 +439,29 @@ A three-tier caching system is used to minimize redundant computations and data 
     --agg-step=0.001
 ```
 
-### MEXC Data via API
+### Multiple Sources (Combined Data)
+
+Fetch from multiple exchanges simultaneously. All ticks are combined and sorted chronologically.
+
 ```bash
-# Fetch ETH/USDT from MEXC (data available from 2023 onwards)
+# Combine data from Bybit and OKX
 ./target/release/series-factory \
-    --sources="mexc" \
-    --from="2024-01-01" \
-    --to="2024-01-31" \
+    --sources="bybit|okx" \
+    --from="2025-01-11" \
+    --to="2025-01-12" \
     --agg-mode="time" \
-    --agg-step=60000
+    --agg-step=10000
+
+# Combine all 5 supported exchanges
+./target/release/series-factory \
+    --sources="binance|bybit|okx|kucoin|bitget" \
+    --from="2025-01-11" \
+    --to="2025-01-12" \
+    --agg-mode="time" \
+    --agg-step=10000
 ```
 
-Note: MEXC uses rate-limited API requests (120/minute). For large date ranges, Binance is preferred due to its bulk download capability.
-
-### Multiple Sources (Future Enhancement)
-```bash
-# Combine multiple exchanges with custom weights
-./target/release/series-factory \
-    --sources="binance|coinbase|kraken" \
-    --weights="0.5|0.3|0.2" \
-    --from="2025-07-20" \
-    --to="2025-07-21" \
-    --agg-mode="time" \
-    --agg-step=1000
-```
+**Note**: When combining multiple sources, use `--weights` to assign custom weights. Weights are auto-normalized so they don't need to sum to 1.0. For example, `--weights="2|1"` gives the first source 2x the influence of the second.
 
 ## Testing
 
