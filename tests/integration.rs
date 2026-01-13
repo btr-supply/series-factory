@@ -177,6 +177,60 @@ async fn test_binance_time_aggregation() {
 }
 
 #[tokio::test]
+async fn test_mexc_time_aggregation() {
+    let config = Config {
+        base: "BTC".to_string(),
+        quote: "USDT".to_string(),
+        sources: vec!["mexc".to_string()],
+        // MEXC data available from 2023 onwards
+        from: Utc::now() - Duration::days(7),
+        to: Utc::now() - Duration::days(6),
+        agg_mode: AggregationMode::Time,
+        agg_step: TEST_STEP_MS as f64,
+        agg_fields: vec!["all".to_string()],
+        weight_mode: series_factory::types::WeightMode::Static,
+        weights: vec![1.0],
+        tick_ttl: 5000,
+        tick_max_deviation: 0.05,
+        out_format: "parquet".to_string(),
+        cache_dir: "/tmp/test_cache".into(),
+        output_dir: "/tmp/test_output".into(),
+    };
+
+    let source = create_source(&DataSource::Exchange("mexc".to_string()))
+        .await
+        .unwrap();
+
+    let (tx, mut rx) = mpsc::channel(100);
+    let config_clone = config.clone();
+    tokio::spawn(async move {
+        let _ = source.fetch_ticks(&config_clone, tx).await;
+    });
+
+    let mut ticks = Vec::new();
+    while let Some(batch) = rx.recv().await {
+        ticks.extend(batch);
+        if ticks.len() > 10_000 { break; }
+    }
+
+    if ticks.is_empty() { return; }
+
+    let mut aggregator = Aggregator::new(config);
+    let aggregates = aggregator.process_ticks(&ticks);
+    let final_agg = aggregator.finalize();
+    let mut results = aggregates;
+    if let Some(agg) = final_agg {
+        if agg.close > 0.0 { results.push(agg); }
+    }
+
+    // Verify consistent timestamp steps
+    for window in results.windows(2) {
+        let diff = window[1].timestamp - window[0].timestamp;
+        assert_eq!(diff, TEST_STEP_MS, "MEXC time aggregates should have consistent steps");
+    }
+}
+
+#[tokio::test]
 async fn test_gbm_price_aggregation() {
     let config = Config {
         base: "BTC".to_string(),

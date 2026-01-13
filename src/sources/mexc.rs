@@ -238,3 +238,125 @@ impl TickSource for MexcSource {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agg_trades_to_ticks() {
+        let trades = vec![
+            MexcAggTrade {
+                agg_trade_id: 1,
+                first_trade_id: 1,
+                last_trade_id: 1,
+                price: "100.0".to_string(),
+                quantity: "1.0".to_string(),
+                transact_time: 1640000000000,
+                is_buyer_maker: true, // Market sell
+            },
+            MexcAggTrade {
+                agg_trade_id: 2,
+                first_trade_id: 2,
+                last_trade_id: 2,
+                price: "101.0".to_string(),
+                quantity: "2.0".to_string(),
+                transact_time: 1640000001000,
+                is_buyer_maker: false, // Market buy
+            },
+            MexcAggTrade {
+                agg_trade_id: 3,
+                first_trade_id: 3,
+                last_trade_id: 3,
+                price: "100.5".to_string(),
+                quantity: "1.5".to_string(),
+                transact_time: 1640000002000,
+                is_buyer_maker: true, // Market sell
+            },
+        ];
+
+        let ticks = MexcSource::agg_trades_to_ticks(trades);
+
+        assert_eq!(ticks.len(), 3);
+
+        // First tick: market sell, price becomes bid
+        assert_eq!(ticks[0].timestamp, 1640000000000);
+        assert_eq!(ticks[0].bid, 100.0);
+        assert!(ticks[0].ask > ticks[0].bid); // ask > bid
+        assert_eq!(ticks[0].vbid, 100); // 1.0 * 100.0
+        assert_eq!(ticks[0].vask, 0);
+
+        // Second tick: market buy, price becomes ask
+        assert_eq!(ticks[1].timestamp, 1640000001000);
+        assert!(ticks[1].bid < ticks[1].ask); // bid < ask
+        assert_eq!(ticks[1].ask, 101.0);
+        assert_eq!(ticks[1].vbid, 0);
+        assert_eq!(ticks[1].vask, 202); // 2.0 * 101.0
+
+        // Third tick: market sell, price becomes bid
+        assert_eq!(ticks[2].timestamp, 1640000002000);
+        assert_eq!(ticks[2].bid, 100.5);
+        assert_eq!(ticks[2].vbid, 150); // 1.5 * 100.5
+        assert_eq!(ticks[2].vask, 0);
+    }
+
+    #[test]
+    fn test_agg_trades_to_ticks_empty() {
+        let trades: Vec<MexcAggTrade> = vec![];
+        let ticks = MexcSource::agg_trades_to_ticks(trades);
+        assert!(ticks.is_empty());
+    }
+
+    #[test]
+    fn test_agg_trades_to_ticks_bid_ask_integrity() {
+        let trades = vec![
+            // First trade initializes both bid and ask
+            MexcAggTrade {
+                agg_trade_id: 1,
+                first_trade_id: 1,
+                last_trade_id: 1,
+                price: "50000.0".to_string(),
+                quantity: "0.1".to_string(),
+                transact_time: 1640000000000,
+                is_buyer_maker: false,
+            },
+            // Subsequent trades should maintain bid < ask
+            MexcAggTrade {
+                agg_trade_id: 2,
+                first_trade_id: 2,
+                last_trade_id: 2,
+                price: "50010.0".to_string(),
+                quantity: "0.1".to_string(),
+                transact_time: 1640000001000,
+                is_buyer_maker: false,
+            },
+            MexcAggTrade {
+                agg_trade_id: 3,
+                first_trade_id: 3,
+                last_trade_id: 3,
+                price: "50005.0".to_string(),
+                quantity: "0.1".to_string(),
+                transact_time: 1640000002000,
+                is_buyer_maker: true,
+            },
+        ];
+
+        let ticks = MexcSource::agg_trades_to_ticks(trades);
+
+        // Verify bid < ask for all ticks
+        for tick in &ticks {
+            assert!(
+                tick.bid < tick.ask,
+                "bid ({}) should be less than ask ({})",
+                tick.bid,
+                tick.ask
+            );
+        }
+
+        // Verify volumes are non-negative
+        for tick in &ticks {
+            assert!(tick.vbid >= 0);
+            assert!(tick.vask >= 0);
+        }
+    }
+}
