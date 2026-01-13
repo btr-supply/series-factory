@@ -3,6 +3,14 @@ name = "series-factory"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "series_factory"
+path = "src/lib.rs"
+
+[[bin]]
+name = "series-factory"
+path = "src/main.rs"
+
 [dependencies]
 # Core async runtime (still needed for main structure)
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "fs", "sync"] }
