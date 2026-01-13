@@ -1,6 +1,10 @@
-# Series Factory: Custom Historical and Synthetical Series Builder
+<div align="center">
+  <img src="banner.png" alt="Series Factory Banner" width="100%">
+</div>
 
-High-performance data pipeline that outputs de-noised, historical or synthetic time series data.
+# Series Factory
+
+High-performance data pipeline for historical and synthetic time series data.
 Aggregate sources or generate fresh data using stochastic models.
 
 ## Table of Contents
