@@ -21,7 +21,7 @@ Aggregate sources or generate fresh data using stochastic models.
 
 ## Features
 
-- **Multiple Data Sources**: Support for exchange data (Binance, Bybit, Coinbase, etc.) and synthetic generators.
+- **Multiple Data Sources**: Support for exchange data (Binance, MEXC, Bybit, Coinbase, etc.) and synthetic generators.
 - **Aggregation Methods**: Time-based and tick-based aggregation with customizable parameters.
 - **Advanced Analytics**: Velocity, dispersion, and drift calculations per aggregate.
 - **Generative Models**: GBM, FBM, Heston, NJDM, and DEJDM for synthetic data generation.
@@ -100,13 +100,27 @@ Tick {
 
 For synthetic pairs (e.g., BTC-ETH), the system uses the most liquid USD* denominated pairs to construct the series. This reduces the number of series to download and cache.
 
-- **USDT denominated**: Binance, Bybit, MEXC, Gate, Bitget, OKX, HTX, KuCoin, BingX
+- **USDT denominated**: Binance, MEXC, Bybit, Gate, Bitget, OKX, HTX, KuCoin, BingX
 - **USD denominated**: Coinbase, Crypto.com, Kraken, Bitfinex, Bitstamp, HyperLiquid
 
-#### 2.1 Triangulation
+#### 2.1 Data Source Characteristics
+
+**Binance** (`binance`):
+- Provides downloadable ZIP files with historical aggregated trade data
+- Data available from 2017 onwards
+- Monthly and daily files for efficient bulk downloads
+- Best for: Large historical data requests, backtesting
+
+**MEXC** (`mexc`):
+- API-based historical data fetching via `/api/v3/aggTrades` endpoint
+- Data available from 2023 onwards (01-01-2023)
+- Rate-limited (120 requests/minute), uses pagination
+- Best for: Recent data, real-time integration, smaller date ranges
+
+#### 2.2 Triangulation
 Time-based forward filling is used to merge the USD* pairs into a single intermediate synthetic series.
 
-#### 2.2 Volume Re-basing
+#### 2.3 Volume Re-basing
 To make volumes comparable, they are denominated in USD*. For synthetic pairs, the volume is estimated using the arithmetic mean of the constituent pair volumes to avoid overstating liquidity.
 
 ### Step 3: Ticks to Aggregates
@@ -388,6 +402,19 @@ A three-tier caching system is used to minimize redundant computations and data 
     --agg-mode="tick" \
     --agg-step=0.001
 ```
+
+### MEXC Data via API
+```bash
+# Fetch ETH/USDT from MEXC (data available from 2023 onwards)
+./target/release/series-factory \
+    --sources="mexc" \
+    --from="2024-01-01" \
+    --to="2024-01-31" \
+    --agg-mode="time" \
+    --agg-step=60000
+```
+
+Note: MEXC uses rate-limited API requests (120/minute). For large date ranges, Binance is preferred due to its bulk download capability.
 
 ### Multiple Sources (Future Enhancement)
 ```bash
