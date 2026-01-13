@@ -3,7 +3,6 @@ use crate::sources::TickSource;
 use anyhow::Result;
 use chrono::{Datelike, Duration, NaiveDate, Utc};
 use csv::ReaderBuilder;
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
@@ -31,13 +30,6 @@ impl BybitSource {
         format!("{}{}", config.base, config.quote)
     }
 
-    fn get_cache_path(&self, config: &Config, filename: &str) -> PathBuf {
-        config.cache_dir
-            .join("bybit")
-            .join(&self.get_symbol(config))
-            .join(filename.replace(".csv.gz", ".parquet"))
-    }
-
     async fn ensure_cache_dir(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -62,20 +54,14 @@ impl BybitSource {
                 .and_then(|s| s.parse::<u64>().ok())
                 .unwrap_or(0);
 
-            let pb = ProgressBar::new(total_size);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                    .unwrap()
-                    .progress_chars("#>-"),
-            );
+            debug!("Downloading {} bytes", total_size);
 
             let mut file = fs::File::create(&path_copy)
                 .map_err(|e| anyhow::anyhow!("Failed to create file: {}", e))?;
 
             let mut reader = response.into_reader();
             let mut buffer = [0; 8192];
-            let mut downloaded = 0;
+            let mut downloaded = 0u64;
 
             loop {
                 let bytes_read = reader.read(&mut buffer)
@@ -86,10 +72,14 @@ impl BybitSource {
                 file.write_all(&buffer[..bytes_read])
                     .map_err(|e| anyhow::anyhow!("Failed to write to file: {}", e))?;
                 downloaded += bytes_read as u64;
-                pb.set_position(downloaded);
+
+                // Log progress every 10MB
+                if downloaded % (10 * 1024 * 1024) == 0 {
+                    debug!("Downloaded {} / {} bytes", downloaded, total_size);
+                }
             }
 
-            pb.finish_with_message("Downloaded");
+            debug!("Download complete: {} bytes", downloaded);
             Ok(())
         }).await?
     }

@@ -1,4 +1,7 @@
-use crate::types::{Aggregate, AggregationMode, Config, Tick, round_to_6_sig_digits};
+use crate::types::{
+    Aggregate, AggregationMode, Config, Tick,
+    DEFAULT_SPREAD, PARALLEL_THRESHOLD, round_to_6_sig_digits,
+};
 use rayon::prelude::*;
 
 pub struct Aggregator {
@@ -114,9 +117,10 @@ impl Aggregator {
                     velocity: 0.0,
                     dispersion: 0.0,
                     drift: 0.0,
+                    is_synthetic: false,
                 };
             }
-            
+
             // Create a flat candle at last known price (no price movement during this period)
             return Aggregate {
                 timestamp: aggregate_timestamp,
@@ -125,12 +129,13 @@ impl Aggregator {
                 low: self.last_aggregate_price,
                 close: self.last_aggregate_price,
                 mid: self.last_aggregate_price,
-                spread: 0.0001, // Minimal spread for empty periods
+                spread: DEFAULT_SPREAD,
                 vbid: 0,
                 vask: 0,
                 velocity: 0.0,
                 dispersion: 0.0,
                 drift: 0.0,
+                is_synthetic: false,
             };
         }
 
@@ -145,10 +150,11 @@ impl Aggregator {
         let tick_mids: Vec<f64> = bucket_ticks.iter()
             .map(|t| (t.bid + t.ask) / 2.0)
             .collect();
-        let close = *tick_mids.last().unwrap();  // Last tick mid price for filtering
+        // Safe: bucket_ticks is non-empty (checked at function start)
+        let close = tick_mids.last().copied().unwrap_or(0.0);
 
         // Calculate spreads for filtering (not used in final output)
-        let _spreads: Vec<f64> = if bucket_ticks.len() > 1000 {
+        let _spreads: Vec<f64> = if bucket_ticks.len() > PARALLEL_THRESHOLD {
             bucket_ticks
                 .par_iter()
                 .map(|tick| {
@@ -185,12 +191,13 @@ impl Aggregator {
                 low: self.last_aggregate_price,
                 close: self.last_aggregate_price,
                 mid: self.last_aggregate_price,
-                spread: 0.0001,
+                spread: DEFAULT_SPREAD,
                 vbid: 0,
                 vask: 0,
                 velocity: 0.0,
                 dispersion: 0.0,
                 drift: 0.0,
+                is_synthetic: false,
             };
         }
 
@@ -201,20 +208,19 @@ impl Aggregator {
         let valid_mids: Vec<f64> = valid_ticks.iter()
             .map(|t| (t.bid + t.ask) / 2.0)
             .collect();
-        
-        let final_open = round_to_6_sig_digits(*valid_mids.first().unwrap());
-        let final_close = round_to_6_sig_digits(*valid_mids.last().unwrap());
+
+        // Safe: valid_ticks is non-empty (checked above)
+        let final_open = round_to_6_sig_digits(valid_mids.first().copied().unwrap_or(0.0));
+        let final_close = round_to_6_sig_digits(valid_mids.last().copied().unwrap_or(0.0));
         let final_high = round_to_6_sig_digits(
-            valid_mids.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+            valid_mids.iter().copied().fold(f64::NEG_INFINITY, f64::max)
         );
         let final_low = round_to_6_sig_digits(
-            valid_mids.iter().cloned().fold(f64::INFINITY, f64::min)
+            valid_mids.iter().copied().fold(f64::INFINITY, f64::min)
         );
-        
-        // Using final_close instead of VWAP mid calculation
-        
+
         // Recompute spread using valid ticks only
-        let spread = if valid_ticks.len() > 1000 {
+        let spread = if valid_ticks.len() > PARALLEL_THRESHOLD {
             valid_ticks
                 .par_iter()
                 .map(|tick| {
@@ -258,13 +264,14 @@ impl Aggregator {
             high: final_high,
             low: final_low,
             close: final_close,
-            mid: final_close,  // alias for close (standard bid|ask|mid format)
+            mid: final_close,
             spread: spread as f32,
             vbid,
             vask,
             velocity,
             dispersion,
             drift,
+            is_synthetic: false,
         }
     }
 
@@ -290,7 +297,7 @@ impl Aggregator {
         let y_mean = y_values.iter().sum::<f64>() / n as f64;
 
         // Dispersion: standard deviation of mids normalized by mean
-        let variance = if n > 1000 {
+        let variance = if n > PARALLEL_THRESHOLD {
             y_values
                 .par_iter()
                 .map(|y| (y - y_mean).powi(2))
@@ -314,8 +321,9 @@ impl Aggregator {
             denominator += (x_values[i] - x_mean).powi(2);
         }
         let slope = if denominator != 0.0 { numerator / denominator } else { 0.0 };
-        let close_price = *y_values.last().unwrap();
-        let time_duration = x_values.last().unwrap() - x_values.first().unwrap();
+        // Safe: n >= 2 checked at function start
+        let close_price = y_values.last().copied().unwrap_or(0.0);
+        let time_duration = x_values.last().copied().unwrap_or(0.0) - x_values.first().copied().unwrap_or(0.0);
         let drift = if close_price.abs() < 1e-10 || time_duration <= 0.0 {
             0.0
         } else {
@@ -326,7 +334,7 @@ impl Aggregator {
     }
 }
 
-#[allow(dead_code)]
+/// Aggregate ticks from multiple sources into a single series
 pub fn aggregate_multi_source(
     source_ticks: Vec<Vec<Tick>>,
     config: &Config,

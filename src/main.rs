@@ -1,16 +1,16 @@
 mod aggregation;
-mod cache;
 mod cli;
+mod display;
 mod output;
 mod sources;
 mod types;
 
 use aggregation::Aggregator;
-use cache::CacheManager;
 use cli::{parse_data_source, Args};
+use display::display_data_table;
 use output::OutputWriter;
 use sources::create_source;
-use types::{Aggregate, Config, DataSource, Tick};
+use types::{Aggregate, Config, DataSource, Tick, DEFAULT_SPREAD, STREAMING_BUFFER_SIZE};
 
 
 use anyhow::Result;
@@ -48,9 +48,6 @@ async fn main() -> Result<()> {
     info!("Starting series factory with config: {:?}", config);
     info!("Output directory: {}", config.output_dir.display());
 
-    // Create cache manager (for raw data caching only)
-    let cache_manager = CacheManager::new(config.cache_dir.clone())?;
-
     // Parse data sources
     let data_sources: Result<Vec<DataSource>> = config
         .sources
@@ -87,37 +84,48 @@ async fn main() -> Result<()> {
     // Drop the original sender so the receiver can detect when all sources are done
     drop(tick_tx);
 
-    // Create streaming aggregation pipeline
+    // Create streaming aggregation pipeline with windowed processing
     let config_for_agg = config_arc.clone();
     let aggregation_task = tokio::spawn(async move {
-        // Collect all ticks first, then split into thread-sized batches for maximum performance
-        let mut all_ticks = Vec::new();
+        let mut aggregator = Aggregator::new((*config_for_agg).clone());
+        let mut total_ticks = 0;
+        let mut tick_buffer = Vec::new();
 
         while let Some(tick_batch) = tick_rx.recv().await {
-            all_ticks.extend(tick_batch);
-        }
-        let total_ticks = all_ticks.len();
+            let batch_len = tick_batch.len();
+            tick_buffer.extend(tick_batch);
+            total_ticks += batch_len;
 
-        if all_ticks.is_empty() {
-            return;
-        }
+            // Process buffer when it reaches threshold
+            if tick_buffer.len() >= STREAMING_BUFFER_SIZE {
+                // Sort current buffer
+                tick_buffer.par_sort_unstable_by_key(|t| t.timestamp);
 
-        info!("Collected {} ticks, sorting chronologically", total_ticks);
-        
-        // Sort all ticks chronologically using parallel sort
-        all_ticks.par_sort_unstable_by_key(|t| t.timestamp);
+                // Stream through aggregator
+                let batch_aggregates = aggregator.process_ticks(&tick_buffer);
+                if !batch_aggregates.is_empty() {
+                    let _ = agg_tx.send(batch_aggregates).await;
+                }
 
-        info!("Processing ticks sequentially to ensure correct bucket aggregation");
-        
-        // Process sequentially to avoid bucket boundary artifacts
-        let aggregates = process_ticks_sequential(&all_ticks, &config_for_agg);
-        let aggregate_count = aggregates.len();
-        
-        if !aggregates.is_empty() {
-            let _ = agg_tx.send(aggregates).await;
+                tick_buffer.clear();
+            }
         }
 
-        info!("Processed {} total ticks into {} aggregates", total_ticks, aggregate_count);
+        // Process remaining ticks
+        if !tick_buffer.is_empty() {
+            tick_buffer.par_sort_unstable_by_key(|t| t.timestamp);
+            let batch_aggregates = aggregator.process_ticks(&tick_buffer);
+            if !batch_aggregates.is_empty() {
+                let _ = agg_tx.send(batch_aggregates).await;
+            }
+        }
+
+        // Finalize aggregator
+        if let Some(final_agg) = aggregator.finalize() {
+            let _ = agg_tx.send(vec![final_agg]).await;
+        }
+
+        info!("Processed {} total ticks via streaming aggregation", total_ticks);
     });
 
     // Collect aggregates from the streaming pipeline
@@ -131,10 +139,16 @@ async fn main() -> Result<()> {
         task.await?;
     }
     aggregation_task.await?;
-    
+
     // Sort by timestamp and deduplicate
     all_aggregates.sort_by_key(|a| a.timestamp);
     all_aggregates.dedup_by_key(|a| a.timestamp);
+
+    // Filter out placeholder aggregates with zero price
+    all_aggregates.retain(|agg| agg.close > 0.0);
+
+    // Ensure complete time coverage with synthetic marking
+    all_aggregates = ensure_complete_time_coverage(all_aggregates, &config);
 
     if all_aggregates.is_empty() {
         warn!("No aggregates generated. Exiting.");
@@ -144,7 +158,7 @@ async fn main() -> Result<()> {
     info!("Generated {} aggregates", all_aggregates.len());
 
     // Write output
-    let output_writer = OutputWriter::new(cache_manager);
+    let output_writer = OutputWriter::new();
     let output_path = output_writer.write_aggregates(&config, &all_aggregates).await?;
 
     // Display head and tail of the generated data
@@ -157,28 +171,6 @@ async fn main() -> Result<()> {
     info!("Total aggregates: {}", all_aggregates.len());
 
     Ok(())
-}
-
-
-// Correct tick processing: sequential aggregation to avoid bucket boundary artifacts
-fn process_ticks_sequential(all_ticks: &[Tick], config: &Config) -> Vec<Aggregate> {
-    if all_ticks.is_empty() {
-        return Vec::new();
-    }
-
-    let mut aggregator = Aggregator::new(config.clone());
-    let mut aggregates = aggregator.process_ticks(all_ticks);
-    if let Some(final_agg) = aggregator.finalize() {
-        aggregates.push(final_agg);
-    }
-    
-    // Filter out placeholder aggregates with zero price
-    aggregates.retain(|agg| agg.close > 0.0);
-    
-    // Ensure complete time coverage
-    aggregates = ensure_complete_time_coverage(aggregates, config);
-    
-    aggregates
 }
 
 // Ensure every time interval has a data point
@@ -225,12 +217,13 @@ fn ensure_complete_time_coverage(mut aggregates: Vec<Aggregate>, config: &Config
                         low: last_price,
                         close: last_price,
                         mid: last_price,
-                        spread: 0.0001,
+                        spread: DEFAULT_SPREAD,
                         vbid: 0,
                         vask: 0,
                         velocity: 0.0,
                         dispersion: 0.0,
                         drift: 0.0,
+                        is_synthetic: true,
                     });
                 }
             } else {
@@ -253,6 +246,7 @@ fn ensure_complete_time_coverage(mut aggregates: Vec<Aggregate>, config: &Config
                 velocity: 0.0,
                 dispersion: 0.0,
                 drift: 0.0,
+                is_synthetic: true,
             });
         }
         
@@ -260,98 +254,4 @@ fn ensure_complete_time_coverage(mut aggregates: Vec<Aggregate>, config: &Config
     }
     
     complete_aggregates
-}
-
-
-fn display_data_table(aggregates: &[Aggregate]) {
-    use chrono::DateTime;
-    
-    if aggregates.is_empty() {
-        println!("No data to display");
-        return;
-    }
-    
-    println!("\n{}", "=".repeat(120));
-    println!("                                    GENERATED DATA PREVIEW");
-    println!("{}", "=".repeat(120));
-    
-    // Header
-    println!("{:<20} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12} {:>12}", 
-        "Timestamp", "Mid", "Spread", "VBid", "VAsk", "Velocity", "Dispersion", "Drift");
-    println!("{}", "-".repeat(120));
-    
-    // Display first 10 rows
-    println!("=== FIRST 10 ROWS ===");
-    for (i, agg) in aggregates.iter().take(10).enumerate() {
-        // Debug: print raw timestamp for first aggregate
-        if i == 0 {
-            println!("DEBUG: First aggregate timestamp = {}", agg.timestamp);
-        }
-        let dt = DateTime::from_timestamp_millis(agg.timestamp).unwrap_or_default();
-        let formatted_time = dt.format("%Y%m%d %H:%M:%S%.3f").to_string();
-        
-        // Use adaptive precision for close price display
-        let price_str = if agg.close < 1.0 {
-            format!("{:.8}", agg.close)  // 8 decimal places for small numbers
-        } else if agg.close < 100.0 {
-            format!("{:.6}", agg.close)  // 6 decimal places for medium numbers  
-        } else {
-            format!("{:.4}", agg.close)  // 4 decimal places for large numbers
-        };
-        
-        println!("{:<20} {:>12} {:>12.6} {:>12} {:>12} {:>12.6} {:>12.6} {:>12.6}",
-            formatted_time,
-            price_str,
-            agg.spread,
-            agg.vbid,
-            agg.vask,
-            agg.velocity,
-            agg.dispersion,
-            agg.drift
-        );
-    }
-    
-    // Display last 10 rows if we have more than 10 rows
-    if aggregates.len() > 10 {
-        println!("\n=== LAST 10 ROWS ===");
-        for agg in aggregates.iter().rev().take(10).rev() {
-            let dt = DateTime::from_timestamp_millis(agg.timestamp).unwrap_or_default();
-            let formatted_time = dt.format("%Y%m%d %H:%M:%S%.3f").to_string();
-            
-            // Use adaptive precision for close price display
-            let price_str = if agg.close < 1.0 {
-                format!("{:.8}", agg.close)  // 8 decimal places for small numbers
-            } else if agg.close < 100.0 {
-                format!("{:.6}", agg.close)  // 6 decimal places for medium numbers  
-            } else {
-                format!("{:.4}", agg.close)  // 4 decimal places for large numbers
-            };
-            
-            println!("{:<20} {:>12} {:>12.6} {:>12} {:>12} {:>12.6} {:>12.6} {:>12.6}",
-                formatted_time,
-                price_str,
-                agg.spread,
-                agg.vbid,
-                agg.vask,
-                agg.velocity,
-                agg.dispersion,
-                agg.drift
-            );
-        }
-    }
-    
-    println!("{}", "=".repeat(120));
-    println!("Total rows: {}", aggregates.len());
-    
-    // Summary statistics
-    if !aggregates.is_empty() {
-        let avg_price: f64 = aggregates.iter().map(|a| a.close).sum::<f64>() / aggregates.len() as f64;
-        let avg_spread: f32 = aggregates.iter().map(|a| a.spread).sum::<f32>() / aggregates.len() as f32;
-        let total_volume: u64 = aggregates.iter().map(|a| (a.vbid + a.vask) as u64).sum();
-        
-        println!("Average Price: {:.4}", avg_price);
-        println!("Average Spread: {:.6}", avg_spread);
-        println!("Total Volume: {}", total_volume);
-    }
-    println!("{}", "=".repeat(120));
 }

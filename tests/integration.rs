@@ -1,5 +1,5 @@
 use series_factory::types::{AggregationMode, Config, DataSource, GenerativeModel};
-use series_factory::aggregation::Aggregator;
+use series_factory::aggregation::aggregate_multi_source;
 use series_factory::sources::create_source;
 use chrono::{Duration, Utc};
 use tokio::sync::mpsc;
@@ -20,9 +20,7 @@ fn test_config() -> Config {
         weight_mode: series_factory::types::WeightMode::Static,
         weights: vec![1.0],
         source_weights: vec![],
-        tick_ttl: 5000,
         tick_max_deviation: 0.05,
-        out_format: "parquet".to_string(),
         cache_dir: "/tmp/test_cache".into(),
         output_dir: "/tmp/test_output".into(),
     }
@@ -53,13 +51,7 @@ async fn test_exchange_time_aggregation(exchange: &str, days_back: i64) {
 
     if ticks.is_empty() { return; }
 
-    let mut aggregator = Aggregator::new(config);
-    let aggregates = aggregator.process_ticks(&ticks);
-    let final_agg = aggregator.finalize();
-    let mut results = aggregates;
-    if let Some(agg) = final_agg {
-        if agg.close > 0.0 { results.push(agg); }
-    }
+    let results = aggregate_multi_source(vec![ticks], &config);
 
     // Verify consistent timestamp steps
     for window in results.windows(2) {
@@ -138,15 +130,14 @@ async fn test_gbm_price_aggregation() {
         if ticks.len() > 10_000 { break; }
     }
 
-    let mut aggregator = Aggregator::new(config);
-    let aggregates = aggregator.process_ticks(&ticks);
-    let final_agg = aggregator.finalize();
-    let mut results = aggregates;
-    if let Some(agg) = final_agg {
-        if agg.close > 0.0 { results.push(agg); }
+    let results = aggregate_multi_source(vec![ticks], &config);
+
+    // Verify mid is alias to close
+    for agg in &results {
+        assert_eq!(agg.mid, agg.close, "mid should equal close");
     }
 
-    // Verify Renko-style price steps
+    // Verify Renko-style price steps (using mid)
     for window in results.windows(2) {
         let prev_mid = window[0].mid;
         let curr_mid = window[1].mid;
@@ -197,14 +188,14 @@ async fn test_all_synthetic_models() {
 
             assert!(!ticks.is_empty());
 
-            let mut aggregator = Aggregator::new(config);
-            let results = aggregator.process_ticks(&ticks);
+            let results = aggregate_multi_source(vec![ticks], &config);
             assert!(!results.is_empty());
 
             for agg in &results {
                 assert!(agg.timestamp > 0);
                 assert!(agg.close > 0.0);
                 assert!(agg.velocity >= 0.0);
+                assert_eq!(agg.mid, agg.close, "mid should equal close");
             }
         })
     }).collect();
@@ -235,15 +226,13 @@ async fn test_aggregate_fields() {
         if ticks.len() > 1000 { break; }
     }
 
-    let mut aggregator = Aggregator::new(config);
-    let results = aggregator.process_ticks(&ticks);
+    let results = aggregate_multi_source(vec![ticks], &config);
 
     for agg in &results {
         assert!(agg.timestamp > 0);
         assert!(agg.open > 0.0);
         assert!(agg.high >= agg.low);
         assert!(agg.close > 0.0);
-        assert!(agg.mid > 0.0);
         assert!(agg.spread >= 0.0);
         assert!(agg.velocity >= 0.0);
         assert!(agg.high >= agg.open && agg.high >= agg.close);

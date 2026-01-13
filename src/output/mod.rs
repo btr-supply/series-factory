@@ -1,24 +1,29 @@
-use crate::cache::CacheManager;
 use crate::types::{Aggregate, Config};
 use anyhow::Result;
-use arrow::array::{Float64Array, Float32Array, Int64Array, UInt32Array};
-use parquet::arrow::ArrowWriter;
-use std::fs::File;
 use std::path::PathBuf;
+
+#[cfg(feature = "parquet-output")]
+use arrow::array::{BooleanArray, Float64Array, Float32Array, Int64Array, UInt32Array};
+#[cfg(feature = "parquet-output")]
+use parquet::arrow::ArrowWriter;
+#[cfg(feature = "parquet-output")]
+use std::fs::File;
+#[cfg(feature = "parquet-output")]
 use std::sync::Arc;
 
 /// Writes aggregated time series data to Parquet format
-pub struct OutputWriter {
-    _cache: CacheManager,
-}
+#[derive(Default)]
+pub struct OutputWriter;
 
 impl OutputWriter {
     /// Create a new output writer
-    pub fn new(cache: CacheManager) -> Self {
-        Self { _cache: cache }
+    #[must_use]
+    pub fn new() -> Self {
+        Self
     }
 
     /// Write aggregates to a Parquet file
+    #[cfg(feature = "parquet-output")]
     pub async fn write_aggregates(&self, config: &Config, aggregates: &[Aggregate]) -> Result<PathBuf> {
         if aggregates.is_empty() {
             anyhow::bail!("No aggregates to write");
@@ -37,13 +42,13 @@ impl OutputWriter {
         let highs: Vec<f64> = aggregates.iter().map(|a| a.high).collect();
         let lows: Vec<f64> = aggregates.iter().map(|a| a.low).collect();
         let closes: Vec<f64> = aggregates.iter().map(|a| a.close).collect();
-        let mids: Vec<f64> = aggregates.iter().map(|a| a.mid).collect();
         let spreads: Vec<f32> = aggregates.iter().map(|a| a.spread).collect();
         let vbids: Vec<u32> = aggregates.iter().map(|a| a.vbid).collect();
         let vasks: Vec<u32> = aggregates.iter().map(|a| a.vask).collect();
         let velocities: Vec<f32> = aggregates.iter().map(|a| a.velocity).collect();
         let dispersions: Vec<f32> = aggregates.iter().map(|a| a.dispersion).collect();
         let drifts: Vec<f32> = aggregates.iter().map(|a| a.drift).collect();
+        let is_synthetics: Vec<bool> = aggregates.iter().map(|a| a.is_synthetic).collect();
 
         // Create Arrow arrays
         let timestamp_array = Int64Array::from(timestamps);
@@ -51,13 +56,13 @@ impl OutputWriter {
         let high_array = Float64Array::from(highs);
         let low_array = Float64Array::from(lows);
         let close_array = Float64Array::from(closes);
-        let mid_array = Float64Array::from(mids);
         let spread_array = Float32Array::from(spreads);
         let vbid_array = UInt32Array::from(vbids);
         let vask_array = UInt32Array::from(vasks);
         let velocity_array = Float32Array::from(velocities);
         let dispersion_array = Float32Array::from(dispersions);
         let drift_array = Float32Array::from(drifts);
+        let is_synthetic_array = BooleanArray::from(is_synthetics);
 
         // Create schema
         let schema = arrow::datatypes::Schema::new(vec![
@@ -66,13 +71,13 @@ impl OutputWriter {
             arrow::datatypes::Field::new("high", arrow::datatypes::DataType::Float64, false),
             arrow::datatypes::Field::new("low", arrow::datatypes::DataType::Float64, false),
             arrow::datatypes::Field::new("close", arrow::datatypes::DataType::Float64, false),
-            arrow::datatypes::Field::new("mid", arrow::datatypes::DataType::Float64, false),
             arrow::datatypes::Field::new("spread", arrow::datatypes::DataType::Float32, false),
             arrow::datatypes::Field::new("vbid", arrow::datatypes::DataType::UInt32, false),
             arrow::datatypes::Field::new("vask", arrow::datatypes::DataType::UInt32, false),
             arrow::datatypes::Field::new("velocity", arrow::datatypes::DataType::Float32, false),
             arrow::datatypes::Field::new("dispersion", arrow::datatypes::DataType::Float32, false),
             arrow::datatypes::Field::new("drift", arrow::datatypes::DataType::Float32, false),
+            arrow::datatypes::Field::new("is_synthetic", arrow::datatypes::DataType::Boolean, false),
         ]);
 
         // Create record batch
@@ -84,13 +89,13 @@ impl OutputWriter {
                 Arc::new(high_array) as _,
                 Arc::new(low_array) as _,
                 Arc::new(close_array) as _,
-                Arc::new(mid_array) as _,
                 Arc::new(spread_array) as _,
                 Arc::new(vbid_array) as _,
                 Arc::new(vask_array) as _,
                 Arc::new(velocity_array) as _,
                 Arc::new(dispersion_array) as _,
                 Arc::new(drift_array) as _,
+                Arc::new(is_synthetic_array) as _,
             ],
         )?;
 

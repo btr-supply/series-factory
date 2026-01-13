@@ -1,5 +1,5 @@
 use series_factory::types::{AggregationMode, Config, DataSource, GenerativeModel};
-use series_factory::aggregation::Aggregator;
+use series_factory::aggregation::aggregate_multi_source;
 use series_factory::sources::create_source;
 use chrono::{Duration, Utc};
 use tokio::sync::mpsc;
@@ -25,7 +25,6 @@ async fn main() -> anyhow::Result<()> {
 
         let source = create_source(&DataSource::Synthetic(model.clone())).await?;
         let config = Config {
-            source_weights: vec![],
             base: "TEST".to_string(),
             quote: "USD".to_string(),
             sources: vec![name.to_string()],
@@ -36,9 +35,8 @@ async fn main() -> anyhow::Result<()> {
             agg_fields: vec!["all".to_string()],
             weight_mode: series_factory::types::WeightMode::Static,
             weights: vec![1.0],
-            tick_ttl: 5000,
+            source_weights: vec![1.0],
             tick_max_deviation: 0.05,
-            out_format: "parquet".to_string(),
             cache_dir: "/tmp/verify_cache".into(),
             output_dir: "/tmp/verify_output".into(),
         };
@@ -71,13 +69,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // Aggregate and verify
-        let mut aggregator = Aggregator::new(config);
-        let results = aggregator.process_ticks(&ticks);
-        let final_agg = aggregator.finalize();
-        let mut all_results = results;
-        if let Some(agg) = final_agg {
-            if agg.close > 0.0 { all_results.push(agg); }
-        }
+        let all_results = aggregate_multi_source(vec![ticks], &config);
 
         println!("  Generated {} aggregates", all_results.len());
 

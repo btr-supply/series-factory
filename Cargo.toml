@@ -11,8 +11,12 @@ path = "src/lib.rs"
 name = "series-factory"
 path = "src/main.rs"
 
+[features]
+default = ["parquet-output"]
+parquet-output = ["arrow", "parquet"]
+
 [dependencies]
-# Core async runtime (still needed for main structure)
+# Core async runtime
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros", "fs", "sync"] }
 # Parallel processing
 rayon = "1.10"
@@ -20,15 +24,15 @@ rayon = "1.10"
 clap = { version = "4.5", features = ["derive"] }
 # Date/time handling
 chrono = { version = "0.4", features = ["serde"] }
-# HTTP client - synchronous
+# HTTP client - synchronous (TODO: replace with reqwest async)
 ureq = "2.10"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 # CSV parsing
 csv = "1.3"
-# Parquet support
-arrow = "54.0"
-parquet = "54.0"
+# Parquet support (feature-gated, minimal features)
+arrow = { version = "54.0", default-features = false, features = ["ipc"], optional = true }
+parquet = { version = "54.0", default-features = false, features = ["arrow"], optional = true }
 # ZIP compression for Binance data
 zip = "2.2"
 # GZIP compression for Bybit data
@@ -36,19 +40,13 @@ flate2 = "1.0"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Progress bars
-indicatif = "0.17"
 # Random number generation for synthetic data
 rand = "0.8"
 rand_distr = "0.4"
-# Regex for parsing generative parameters
-regex = "1.11"
 # Async traits (needed for dyn compatibility)
 async-trait = "0.1"
-# Error handling (simplified usage)
+# Error handling
 anyhow = "1.0"
-# Hash for cache keys
-sha2 = "0.10"
 
 [profile.dev]
 opt-level = 0

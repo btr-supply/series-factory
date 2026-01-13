@@ -2,54 +2,61 @@ use crate::types::{AggregationMode, Config, DataSource, GenerativeModel, WeightM
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use clap::Parser;
-use regex::Regex;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "Generate aggregated time series from tick data")]
 pub struct Args {
+    /// Base asset symbol (e.g., BTC)
     #[arg(long, default_value = "BTC")]
     pub base: String,
 
+    /// Quote asset symbol (e.g., USDT)
     #[arg(long, default_value = "USDT")]
     pub quote: String,
 
+    /// Data sources (exchange names or synthetic models, pipe-delimited)
+    /// Examples: "binance", "binance|bybit", "gbm(0.0001,0.02,100.0)"
     #[arg(long, default_value = "binance", value_delimiter = '|')]
     pub sources: Vec<String>,
 
+    /// Start date/time (ISO format or relative: now, yesterday, 7-days-ago, 30-days-ago)
     #[arg(long, default_value = "30-days-ago")]
     pub from: String,
 
+    /// End date/time (ISO format or relative)
     #[arg(long, default_value = "yesterday")]
     pub to: String,
 
-    #[arg(long, value_enum, default_value = "time")]
+    /// Aggregation mode: time (time-based buckets) or tick (price-based buckets)
+    #[arg(long, default_value = "time")]
     pub agg_mode: String,
 
+    /// Aggregation step (milliseconds for time mode, ratio for tick mode)
     #[arg(long, default_value = "1000")]
     pub agg_step: f64,
 
+    /// Output fields: "all" or pipe-delimited list (ohlc|mid|spread|velocity|dispersion|drift)
     #[arg(long, default_value = "all", value_delimiter = '|')]
     pub agg_fields: Vec<String>,
 
+    /// Weight mode for multi-source aggregation: static, volume, or mixed
     #[arg(long, default_value = "static")]
     pub weight_mode: String,
 
+    /// Source weights (pipe-delimited, e.g., "50|50" for equal weight)
     #[arg(long, value_delimiter = '|')]
     pub weights: Option<Vec<f64>>,
 
-    #[arg(long, default_value = "5000")]
-    pub tick_ttl: i64,
-
+    /// Maximum price deviation for outlier filtering (ratio)
     #[arg(long, default_value = "0.05")]
     pub tick_max_deviation: f64,
 
-    #[arg(long, default_value = "parquet")]
-    pub out_format: String,
-
+    /// Cache directory for downloaded data
     #[arg(long, default_value = "./cache")]
     pub cache_dir: PathBuf,
 
+    /// Output directory for generated files
     #[arg(long, default_value = "./output")]
     pub output_dir: PathBuf,
 }
@@ -62,30 +69,25 @@ impl Args {
         let agg_mode = match self.agg_mode.as_str() {
             "tick" => AggregationMode::Tick,
             "time" => AggregationMode::Time,
-            _ => return Err(anyhow!("Invalid aggregation mode")),
+            other => return Err(anyhow!("Invalid aggregation mode: '{}'. Use 'time' or 'tick'", other)),
         };
 
         let weight_mode = match self.weight_mode.as_str() {
             "static" => WeightMode::Static,
             "volume" => WeightMode::Volume,
             "mixed" => WeightMode::Mixed,
-            _ => return Err(anyhow!("Invalid weight mode")),
+            other => return Err(anyhow!("Invalid weight mode: '{}'. Use 'static', 'volume', or 'mixed'", other)),
         };
 
-        let weights = if let Some(w) = self.weights {
-            w
-        } else {
-            vec![]  // Empty means equal weights
-        };
-
-        // Normalize weights to sum to 1.0
+        let weights = self.weights.unwrap_or_default();
         let source_weights = normalize_weights(&weights, self.sources.len());
 
-        // Handle "all" fields
+        // Expand "all" to full field list
         let agg_fields = if self.agg_fields.len() == 1 && self.agg_fields[0] == "all" {
-            ["timestamp", "mid", "spread", "vbid", "vask", "velocity", "dispersion", "drift"]
-            .map(String::from)
-            .into()
+            vec![
+                "timestamp", "open", "high", "low", "close",
+                "spread", "vbid", "vask", "velocity", "dispersion", "drift"
+            ].into_iter().map(String::from).collect()
         } else {
             self.agg_fields
         };
@@ -102,9 +104,7 @@ impl Args {
             weight_mode,
             weights,
             source_weights,
-            tick_ttl: self.tick_ttl,
             tick_max_deviation: self.tick_max_deviation,
-            out_format: self.out_format,
             cache_dir: self.cache_dir,
             output_dir: self.output_dir,
         })
@@ -130,55 +130,76 @@ fn parse_datetime(s: &str) -> Result<DateTime<Utc>> {
     }
 }
 
+/// Parse a data source string (exchange name or synthetic model)
+/// Examples: "binance", "gbm(0.0001,0.02,100.0)", "fbm(0.0001,0.02,0.7,100.0)"
 pub fn parse_data_source(source: &str) -> Result<DataSource> {
-    // Check if it's a generative model
-    let gbm_re = Regex::new(r"^gbm\(([^,]+),([^,]+),([^)]+)\)$")?;
-    let fbm_re = Regex::new(r"^fbm\(([^,]+),([^,]+),([^,]+),([^)]+)\)$")?;
-    let hm_re = Regex::new(r"^hm\(([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^)]+)\)$")?;
-    let njdm_re = Regex::new(r"^njdm\(([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^)]+)\)$")?;
-    let dejdm_re = Regex::new(r"^dejdm\(([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^,]+),([^)]+)\)$")?;
-
-    if let Some(caps) = gbm_re.captures(source) {
+    // Check if it's a generative model (starts with known model names)
+    if let Some(params_str) = source.strip_prefix("gbm(") {
+        let params_str = params_str.strip_suffix(')').ok_or_else(|| anyhow!("Missing closing ) in gbm"))?;
+        let parts: Vec<&str> = params_str.split(',').collect();
+        if parts.len() != 3 {
+            return Err(anyhow!("gbm requires 3 parameters: mu,sigma,base"));
+        }
         Ok(DataSource::Synthetic(GenerativeModel::GBM {
-            mu: caps[1].parse()?,
-            sigma: caps[2].parse()?,
-            base: caps[3].parse()?,
+            mu: parts[0].trim().parse()?,
+            sigma: parts[1].trim().parse()?,
+            base: parts[2].trim().parse()?,
         }))
-    } else if let Some(caps) = fbm_re.captures(source) {
+    } else if let Some(params_str) = source.strip_prefix("fbm(") {
+        let params_str = params_str.strip_suffix(')').ok_or_else(|| anyhow!("Missing closing ) in fbm"))?;
+        let parts: Vec<&str> = params_str.split(',').collect();
+        if parts.len() != 4 {
+            return Err(anyhow!("fbm requires 4 parameters: mu,sigma,hurst,base"));
+        }
         Ok(DataSource::Synthetic(GenerativeModel::FBM {
-            mu: caps[1].parse()?,
-            sigma: caps[2].parse()?,
-            hurst: caps[3].parse()?,
-            base: caps[4].parse()?,
+            mu: parts[0].trim().parse()?,
+            sigma: parts[1].trim().parse()?,
+            hurst: parts[2].trim().parse()?,
+            base: parts[3].trim().parse()?,
         }))
-    } else if let Some(caps) = hm_re.captures(source) {
+    } else if let Some(params_str) = source.strip_prefix("hm(") {
+        let params_str = params_str.strip_suffix(')').ok_or_else(|| anyhow!("Missing closing ) in hm"))?;
+        let parts: Vec<&str> = params_str.split(',').collect();
+        if parts.len() != 7 {
+            return Err(anyhow!("hm requires 7 parameters: mu,sigma,kappa,theta,xi,rho,base"));
+        }
         Ok(DataSource::Synthetic(GenerativeModel::Heston {
-            mu: caps[1].parse()?,
-            sigma: caps[2].parse()?,
-            kappa: caps[3].parse()?,
-            theta: caps[4].parse()?,
-            xi: caps[5].parse()?,
-            rho: caps[6].parse()?,
-            base: caps[7].parse()?,
+            mu: parts[0].trim().parse()?,
+            sigma: parts[1].trim().parse()?,
+            kappa: parts[2].trim().parse()?,
+            theta: parts[3].trim().parse()?,
+            xi: parts[4].trim().parse()?,
+            rho: parts[5].trim().parse()?,
+            base: parts[6].trim().parse()?,
         }))
-    } else if let Some(caps) = njdm_re.captures(source) {
+    } else if let Some(params_str) = source.strip_prefix("njdm(") {
+        let params_str = params_str.strip_suffix(')').ok_or_else(|| anyhow!("Missing closing ) in njdm"))?;
+        let parts: Vec<&str> = params_str.split(',').collect();
+        if parts.len() != 6 {
+            return Err(anyhow!("njdm requires 6 parameters: mu,sigma,lambda,mu_jump,sigma_jump,base"));
+        }
         Ok(DataSource::Synthetic(GenerativeModel::NormalJumpDiffusion {
-            mu: caps[1].parse()?,
-            sigma: caps[2].parse()?,
-            lambda: caps[3].parse()?,
-            mu_jump: caps[4].parse()?,
-            sigma_jump: caps[5].parse()?,
-            base: caps[6].parse()?,
+            mu: parts[0].trim().parse()?,
+            sigma: parts[1].trim().parse()?,
+            lambda: parts[2].trim().parse()?,
+            mu_jump: parts[3].trim().parse()?,
+            sigma_jump: parts[4].trim().parse()?,
+            base: parts[5].trim().parse()?,
         }))
-    } else if let Some(caps) = dejdm_re.captures(source) {
+    } else if let Some(params_str) = source.strip_prefix("dejdm(") {
+        let params_str = params_str.strip_suffix(')').ok_or_else(|| anyhow!("Missing closing ) in dejdm"))?;
+        let parts: Vec<&str> = params_str.split(',').collect();
+        if parts.len() != 7 {
+            return Err(anyhow!("dejdm requires 7 parameters: mu,sigma,lambda,mu_pos_jump,mu_neg_jump,p_neg_jump,base"));
+        }
         Ok(DataSource::Synthetic(GenerativeModel::DoubleExpJumpDiffusion {
-            mu: caps[1].parse()?,
-            sigma: caps[2].parse()?,
-            lambda: caps[3].parse()?,
-            mu_pos_jump: caps[4].parse()?,
-            mu_neg_jump: caps[5].parse()?,
-            p_neg_jump: caps[6].parse()?,
-            base: caps[7].parse()?,
+            mu: parts[0].trim().parse()?,
+            sigma: parts[1].trim().parse()?,
+            lambda: parts[2].trim().parse()?,
+            mu_pos_jump: parts[3].trim().parse()?,
+            mu_neg_jump: parts[4].trim().parse()?,
+            p_neg_jump: parts[5].trim().parse()?,
+            base: parts[6].trim().parse()?,
         }))
     } else {
         // It's an exchange name
